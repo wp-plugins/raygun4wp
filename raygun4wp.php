@@ -3,7 +3,7 @@
 Plugin Name: Raygun4WP
 Plugin URI: http://github.com/mindscapehq/raygun4wordpress
 Description: Official Wordpress plugin for the Raygun.io error reporting service
-Version: 1.0.0.0
+Version: 1.0.0.1
 Author: Mindscape
 Author URI: http://raygun.io
 License: MIT
