@@ -55,7 +55,7 @@ function rg4wp_install()
 
 function rg4wp_uninstall()
 {
-  delete_option('rg4wp_setting_apikey');
+  delete_option('rg4wp_apikey');
   delete_option('rg4wp_tags');
   delete_option('rg4wp_status');
   delete_option('rg4wp_404s');
