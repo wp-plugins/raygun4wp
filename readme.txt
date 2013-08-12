@@ -34,6 +34,17 @@ When activating the plugin, if you receive a PHP error message stating that ther
 
 == Changelog  ==
 
+= 1.0.3.0 =
+
+* Added button to test setup on config page
+
+* Added status indicator, improved handling when API key missing or invalid
+
+* Fixed a major bug where the provider would attempt to send errors, even if the status was 'disabled', cURL was missing, or an invalid API key
+ was provided
+
+* Because of these changes, we strongly recommend you upgrade from any earlier releases to 1.0.3.0 or greater.
+
 = 1.0.1.0 =
 
 * Added 404 error handling
