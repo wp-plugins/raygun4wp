@@ -26,15 +26,18 @@ echo '<table class="form-table">
       <tr valign="top">
       <th scope="row">Error Reporting Status</th>
       <td>
-		  <select name="rg4wp_status">
+		  <select name="rg4wp_status" id="statusEnabled">
 		  <option value="0"';
 echo ! get_option( 'rg4wp_status' ) ? ' selected="selected"': '';
 echo  '>Disabled</option>
 		  <option value="1"';
 echo get_option( 'rg4wp_status' ) ? ' selected="selected"': '';
 echo  '>Enabled</option>
-      </select>
-      </td>      
+      </select>      
+      </td>    
+      <td>
+      <div id="statusLight" style="width: 15px; height: 15px; border-radius: 7px;" title="Enabled/disabled status" /> 
+      </td>       
       </tr>
 
       <tr valign="top">
@@ -53,9 +56,9 @@ echo  '>Enabled</option>
 
       <tr valign="top">
       <th scope="row">API Key</th>
-      <td><input type="text" size="60" name="rg4wp_apikey" value="';
+      <td><input type="text" size="60" id="apiKey" name="rg4wp_apikey" value="';
 echo get_option( 'rg4wp_apikey' );
-echo  '" /></td>
+echo  '" /></td>      
       </tr>
 
       <tr valign="top">
@@ -67,12 +70,10 @@ echo '" /></td><td><img src="'.plugin_dir_url(__FILE__).'img/q.gif'.'" class="ma
       </tr>      
       </table>
       <input type="hidden" name="action" value="update" />
-      <input type="hidden" name="page_options" value="rg4wp_status,rg4wp_apikey,rg4wp_tags,rg4wp_404s" />
-
-      <script type="text/javascript" src="http://ajax.googleapis.com/ajax/libs/jquery/1.6.2/jquery.min.js"></script>
+      <input type="hidden" name="page_options" value="rg4wp_status,rg4wp_apikey,rg4wp_tags,rg4wp_404s" />      
 
       <script type="text/javascript">
-$(document).ready(function() {
+jQuery(document).ready(function($) {  
 // Tooltip only Text
 $(\'.masterTooltip\').hover(function(){
         // Hover over code
@@ -92,9 +93,23 @@ $(\'.masterTooltip\').hover(function(){
         $(\'.tooltip\')
         .css({ top: mousey, left: mousex })
 });
+
+if ($("#statusEnabled").val() == 0 || $("#apiKey").val().length < 6) {
+  $("#statusLight").css("background-color", "#C03");  
+}
+else {
+  $("#statusLight").css("background-color", "#0C3");  
+}
 });
+
+function sendTestError()
+{
+  window.location.href = "'.plugins_url('sendtesterror.php?rg4wp_status='.get_option('rg4wp_status').
+    '&rg4wp_apikey='.get_option('rg4wp_apikey'), __FILE__).'";  
+};
 </script>
       ';
-    
-submit_button();
+echo '<div style="display: inline; margin-top: 10px;"><div style="margin-right: 10px; float: left;">';
+submit_button("Save Changes", "primary", "submitForm", false, array('value' => 'submit'));
+echo '</div><div class="button-secondary button-large" style="float: left;" onclick="sendTestError();">Send Test Error</div></div></form>';      
 ?>

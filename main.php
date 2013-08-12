@@ -5,6 +5,13 @@
   add_action( 'admin_menu', 'rg4wp_admin' );
   add_action( 'admin_menu', 'rg4wp_external');
   add_action( 'template_redirect', 'rg4wp_404_handler');
+  add_action( 'wp_enqueue_script', 'load_jquery' );
+  wp_enqueue_script($rgSetStatus, plugins_url('setStatus.js', __FILE__));  
+
+
+  function load_jquery() {
+      wp_enqueue_script( 'jquery' );
+  }
 
   function rg4wp_admin()
   {
@@ -55,7 +62,8 @@
 
   function rg4wp_404_handler()
   {
-      if (get_option('rg4wp_404s') && is_404())
+      if (get_option('rg4wp_status') && get_option('rg4wp_404s') && function_exists('curl_version')
+        && is_404() && get_option('rg4wp_apikey'))
       {
         require_once dirname(__FILE__).'/external/raygun4php/src/Raygun4php/RaygunClient.php';
         $client = new Raygun4php\RaygunClient(get_option('rg4wp_apikey'));
@@ -67,27 +75,31 @@
       }
   }
 
-  if (get_option('rg4wp_status'))
+  if (function_exists('curl_version') && get_option('rg4wp_status') && get_option('rg4wp_apikey'))
   {
      require_once dirname(__FILE__).'/external/raygun4php/src/Raygun4php/RaygunClient.php';
      $client = new Raygun4php\RaygunClient(get_option('rg4wp_apikey'));
-     $tags = explode(',', get_option('rg4wp_tags'));   
+     $tags = explode(',', get_option('rg4wp_tags'));
      
-     function error_handler($errno, $errstr, $errfile, $errline ) {
-          global $client, $tags;        
-          $client->SendError($errno, $errstr, $errfile, $errline, $tags);
+     function error_handler($errno, $errstr, $errfile, $errline ) {      
+          if (get_option('rg4wp_status'))
+          { 
+            global $client, $tags;        
+            $client->SendError($errno, $errstr, $errfile, $errline, $tags);
+          }
       }
 
       function exception_handler($exception)
-      {
-          global $client;
-          $client->SendException($exception);
+      {        
+          if (get_option('rg4wp_status'))
+          { 
+            global $client;
+            $client->SendException($exception);
+          }
       }
 
       set_exception_handler('exception_handler');
       set_error_handler("error_handler");
-
-      
   }
 
   if (!get_option('rg4wp_apikey'))
