@@ -17,7 +17,7 @@ Composer is a package management tool for PHP which automatically fetches depend
 ```json
 {
         "require": {
-            "mindscape/raygun4php": "dev-master"
+            "mindscape/raygun4php": "1.*"
         }
 }
 ```
@@ -45,9 +45,9 @@ Then, create handlers that look something like this:
 ```php
 namespace
 {
-	// your 'requires' statement
-	
-	$client = new \Raygun4php\RaygunClient("{{apikey for your application}}");
+	// paste your 'requires' statement
+
+	$client = new \Raygun4php\RaygunClient("apikey for your application");
 
 	function error_handler($errno, $errstr, $errfile, $errline ) {
 		global $client;
@@ -76,7 +76,7 @@ If the handlers reside in their own file, just import it in every file where you
 This release introduces a new function and optional parameter in the constructor:
 
 ```php
-$client = new \Raygun4php\RaygunClient("{{apikey}}==", boolean useAsyncSending);
+$client = new \Raygun4php\RaygunClient("apiKey", boolean useAsyncSending);
 ```
 
 * If useAsyncSending is *true*, the message will be sent asynchronously. This provides a great speedup versus the older cURL method. This is the default.
@@ -101,6 +101,14 @@ This feature can be used in CLI mode by calling SetUser(string) at the start of 
 SendError and SendException return the HTTP status code of the transaction - `echo`ing this will give you a 403 if your API key is incorrect or a 200 if everything was a success.
 
 ## Changelog
+
+* Version 1.2.4: Merged in unit tests
+
+* Version 1.2.3: Fixed a bug where OccurredOn wasn't in correct ISO 8601 representation
+
+* Version 1.2.2: Minor formatting refactor
+
+* Version 1.2.1: Several bugfixes for user tracking and request processing
 
 * Version 1.2: Added new async sending function; removed cURL dependency
 
