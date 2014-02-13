@@ -7,7 +7,6 @@ namespace Raygun4php
         public $url;
         public $httpMethod;
         public $ipAddress;
-        //
         public $queryString;
         public $headers;
         public $data;
@@ -30,14 +29,22 @@ namespace Raygun4php
             }
 
             $this->headers = $this->emu_getAllHeaders();
-            $this->data = $_SERVER;            
 
             $utf8_convert = function($value) use (&$utf8_convert) {
-                return is_array($value) ? 
-                array_map($utf8_convert, $value) : 
+                return is_array($value) ?
+                array_map($utf8_convert, $value) :
                 iconv('UTF-8', 'UTF-8//IGNORE', $value);
             };
+
+            $utf8_convert_server = function($value) use (&$utf8_convert_server) {
+                return is_array($value) ?
+                array_map($utf8_convert_server, $value) :
+                iconv('UTF-8', 'UTF-8', utf8_encode($value));
+            };
+
             $this->form = array_map($utf8_convert, $_POST);
+
+            $this->data = array_map($utf8_convert_server, $_SERVER);
 
             if (php_sapi_name() !== 'cli')
             {
@@ -50,16 +57,23 @@ namespace Raygun4php
                 {
                     $contentType = $_SERVER['HTTP_CONTENT_TYPE'];
                 }
-                
+
                 if ($_SERVER['REQUEST_METHOD'] != 'GET' &&
                     $contentType != null &&
                     $contentType != 'application/x-www-form-urlencoded' &&
                     $contentType != 'multipart/form-data' &&
                     $contentType != 'text/html')
-                {                
-                  $this->rawData = iconv('UTF-8', 'UTF-8//IGNORE', file_get_contents('php://input'));
+                {
+                  $raw = file_get_contents('php://input');
+
+                  if ($raw != null && strlen($raw) > 4096)
+                  {
+                    $raw = substr($raw, 0, 4095);
+                  }
+
+                  $this->rawData = iconv('UTF-8', 'UTF-8//IGNORE', $raw);
                 }
-            }            
+            }
         }
 
         private function emu_getAllHeaders()

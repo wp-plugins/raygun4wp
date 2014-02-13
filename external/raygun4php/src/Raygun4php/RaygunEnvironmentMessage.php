@@ -3,7 +3,7 @@ namespace Raygun4php
 {
     class RaygunEnvironmentMessage
     {
-        public $utcOffset;
+        public $utcOffset = 0;
 
         public function __construct()
         {
@@ -11,6 +11,9 @@ namespace Raygun4php
             {
                 $this->utcOffset = @date('Z') / 3600;
             }
+
+            $this->utcOffset = max($this->utcOffset, -24);
+            $this->utcOffset = min($this->utcOffset, 24);
         }
     }
 }
