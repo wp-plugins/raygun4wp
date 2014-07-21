@@ -1,7 +1,7 @@
-/*! Raygun4js - v1.8.2 - 2014-05-01
+/*! Raygun4js - v1.10.0 - 2014-07-14
 * https://github.com/MindscapeHQ/raygun4js
 * Copyright (c) 2014 MindscapeHQ; Licensed MIT */
-;(function(window, undefined) {
+(function(window, undefined) {
 
 
 var TraceKit = {};
@@ -104,6 +104,7 @@ TraceKit.report = (function reportModuleWrapper() {
      * @param {Function} handler
      */
     function subscribe(handler) {
+        installGlobalHandler();
         handlers.push(handler);
     }
 
@@ -143,7 +144,7 @@ TraceKit.report = (function reportModuleWrapper() {
         }
     }
 
-    var _oldOnerrorHandler = window.onerror;
+    var _oldOnerrorHandler, _onErrorHandlerInstalled;
 
     /**
      * Ensures all global unhandled exceptions are recorded.
@@ -153,7 +154,7 @@ TraceKit.report = (function reportModuleWrapper() {
      * @param {(number|string)} lineNo The line number at which the error
      * occurred.
      */
-    window.onerror = function traceKitWindowOnError(message, url, lineNo, columnNo, errorObj) {
+    function traceKitWindowOnError(message, url, lineNo, columnNo, errorObj) {
         var stack = null;
 
         if (errorObj) {
@@ -191,7 +192,17 @@ TraceKit.report = (function reportModuleWrapper() {
         }
 
         return false;
-    };
+    }
+
+    function installGlobalHandler ()
+    {
+        if (_onErrorHandlerInstalled === true) {
+           return;
+        }
+        _oldOnerrorHandler = window.onerror;
+        window.onerror = traceKitWindowOnError;
+        _onErrorHandlerInstalled = true;
+    }
 
     /**
      * Reports an unhandled Error to TraceKit.
@@ -316,14 +327,14 @@ TraceKit.computeStackTrace = (function computeStackTraceWrapper() {
             return '';
         }
         try {
-            function getXHR() {
+            var getXHR = function() {
                 try {
                     return new window.XMLHttpRequest();
                 } catch (e) {
                     // explicitly bubble up the exception if not found
                     return new window.ActiveXObject('Microsoft.XMLHTTP');
                 }
-            }
+            };
 
             var request = getXHR();
             request.open('GET', url, false);
@@ -616,7 +627,7 @@ TraceKit.computeStackTrace = (function computeStackTraceWrapper() {
             return null;
         }
 
-        var chrome = /^\s*at (?:((?:\[object object\])?\S+) )?\(?((?:file|http|https):.*?):(\d+)(?::(\d+))?\)?\s*$/i,
+        var chrome = /^\s*at (?:((?:\[object object\])?\S+(?: \[as \S+\])?) )?\(?((?:file|http|https):.*?):(\d+)(?::(\d+))?\)?\s*$/i,
             gecko = /^\s*(\S*)(?:\((.*?)\))?@((?:file|http|https).*?):(\d+)(?::(\d+))?\s*$/i,
             winjs = /^\s*at (?:((?:\[object object\])?.+) )?\(?((?:ms-appx|http|https):.*?):(\d+)(?::(\d+))?\)?\s*$/i,
             lines = ex.stack.split('\n'),
@@ -1059,8 +1070,6 @@ TraceKit.computeStackTrace = (function computeStackTraceWrapper() {
         } catch (ex) {
             return computeStackTrace(ex, depth + 1);
         }
-
-        return null;
     }
 
     computeStackTrace.augmentStackTraceWithInitialElement = augmentStackTraceWithInitialElement;
@@ -1099,67 +1108,6 @@ TraceKit.computeStackTrace = (function computeStackTraceWrapper() {
     _helper('setTimeout');
     _helper('setInterval');
 }());
-
-/**
- * Extended support for backtraces and global error handling for most
- * asynchronous jQuery functions.
- */
-(function traceKitAsyncForjQuery($) {
-
-    // quit if jQuery isn't on the page
-    if (!$) {
-        return;
-    }
-
-    var _oldEventAdd = $.event.add;
-    $.event.add = function traceKitEventAdd(elem, types, handler, data, selector) {
-        var _handler;
-
-        if (handler.handler) {
-            _handler = handler.handler;
-            handler.handler = TraceKit.wrap(handler.handler);
-        } else {
-            _handler = handler;
-            handler = TraceKit.wrap(handler);
-        }
-
-        // If the handler we are attaching doesn’t have the same guid as
-        // the original, it will never be removed when someone tries to
-        // unbind the original function later. Technically as a result of
-        // this our guids are no longer globally unique, but whatever, that
-        // never hurt anybody RIGHT?!
-        if (_handler.guid) {
-            handler.guid = _handler.guid;
-        } else {
-            handler.guid = _handler.guid = $.guid++;
-        }
-
-        return _oldEventAdd.call(this, elem, types, handler, data, selector);
-    };
-
-    var _oldReady = $.fn.ready;
-    $.fn.ready = function traceKitjQueryReadyWrapper(fn) {
-        return _oldReady.call(this, TraceKit.wrap(fn));
-    };
-
-    var _oldAjax = $.ajax;
-    $.ajax = function traceKitAjaxWrapper(s) {
-        var keys = ['complete', 'error', 'success'], key;
-        while(key = keys.pop()) {
-            if ($.isFunction(s[key])) {
-                s[key] = TraceKit.wrap(s[key]);
-            }
-        }
-
-        try {
-            return _oldAjax.call(this, s);
-        } catch (e) {
-            TraceKit.report(e);
-            throw e;
-        }
-    };
-
-}(window.jQuery));
 
 //Default options:
 if (!TraceKit.remoteFetching) {
@@ -1251,11 +1199,13 @@ window.TraceKit = TraceKit;
       _raygunApiKey,
       _debugMode = false,
       _allowInsecureSubmissions = false,
+      _ignoreAjaxAbort = false,
       _enableOfflineSave = false,
       _customData = {},
       _tags = [],
       _user,
       _version,
+      _filteredKeys,
       _raygunApiUrl = 'https://api.raygun.io',
       $document;
 
@@ -1278,6 +1228,8 @@ window.TraceKit = TraceKit;
       if (options)
       {
         _allowInsecureSubmissions = options.allowInsecureSubmissions || false;
+        _ignoreAjaxAbort = options.ignoreAjaxAbort || false;
+
         if (options.debugMode)
         {
           _debugMode = options.debugMode;
@@ -1320,7 +1272,9 @@ window.TraceKit = TraceKit;
     send: function (ex, customData, tags) {
       try {
         processUnhandledException(_traceKit.computeStackTrace(ex), {
-          customData: merge(_customData, customData),
+          customData: typeof _customData === 'function' ?
+            merge(_customData(), customData) :
+            merge(_customData, customData),
           tags: mergeArray(_tags, tags)
         });
       }
@@ -1332,8 +1286,26 @@ window.TraceKit = TraceKit;
       return Raygun;
     },
 
-    setUser: function (user) {
-      _user = { 'Identifier': user };
+    setUser: function (user, isAnonymous, email, fullName, firstName, uuid) {
+      _user = {
+        'Identifier': user
+      };
+      if(isAnonymous) {
+        _user['IsAnonymous'] = isAnonymous;
+      }
+      if(email) {
+        _user['Email'] = email;
+      }
+      if(fullName) {
+        _user['FullName'] = fullName;
+      }
+      if(firstName) {
+        _user['FirstName'] = firstName;
+      }
+      if(uuid) {
+        _user['UUID'] = uuid;
+      }
+
       return Raygun;
     },
 
@@ -1348,6 +1320,10 @@ window.TraceKit = TraceKit;
       }
 
       return Raygun;
+    },
+    filterSensitiveData: function (filteredKeys) {
+      _filteredKeys = filteredKeys;
+      return Raygun;
     }
   };
 
@@ -1357,16 +1333,21 @@ window.TraceKit = TraceKit;
       // truncate after fourth /, or 24 characters, whichever is shorter
       // /api/1/diagrams/xyz/server becomes
       // /api/1/diagrams/...
+      var truncated = url;
       var path = url.split('//')[1];
-      var queryStart = path.indexOf('?');
-      var sanitizedPath = path.toString().substring(0, queryStart);
-      var truncated_parts = sanitizedPath.split('/').slice(0, 4).join('/');
-      var truncated_length = sanitizedPath.substring(0, 48);
-      var truncated = truncated_parts.length < truncated_length.length?
-                      truncated_parts : truncated_length;
-      if (truncated !== sanitizedPath) {
-          truncated += '..';
+
+      if (path) {
+        var queryStart = path.indexOf('?');
+        var sanitizedPath = path.toString().substring(0, queryStart);
+        var truncated_parts = sanitizedPath.split('/').slice(0, 4).join('/');
+        var truncated_length = sanitizedPath.substring(0, 48);
+        truncated = truncated_parts.length < truncated_length.length?
+                        truncated_parts : truncated_length;
+        if (truncated !== sanitizedPath) {
+            truncated += '..';
+        }
       }
+
       return truncated;
   }
 
@@ -1375,6 +1356,14 @@ window.TraceKit = TraceKit;
         (jqXHR.statusText || 'unknown') +' '+
         (ajaxSettings.type || 'unknown') + ' '+
         (truncateURL(ajaxSettings.url) || 'unknown');
+
+    // ignore ajax abort if set in the options
+    if (_ignoreAjaxAbort) {
+      if (!jqXHR.getAllResponseHeaders()) {
+         return;
+       }
+    }
+
     Raygun.send(thrownError || event.type, {
       status: jqXHR.status,
       statusText: jqXHR.statusText,
@@ -1458,12 +1447,22 @@ window.TraceKit = TraceKit;
     }
   }
 
-  function sendSavedErrors() {
-    for (var key in localStorage) {
-      if (key.substring(0, 9) === 'raygunjs=') {
-        sendToRaygun(JSON.parse(localStorage[key]));
+  function localStorageAvailable(){
+    try {
+      return ('localStorage' in window) && window['localStorage'] !== null;
+    } catch(e){
+      return false;
+    }
+  }
 
-        localStorage.removeItem(key);
+  function sendSavedErrors() {
+    if (localStorageAvailable() && localStorage.length > 0) {
+        for (var key in localStorage) {
+        if (key.substring(0, 9) === 'raygunjs=') {
+          sendToRaygun(JSON.parse(localStorage[key]));
+
+          localStorage.removeItem(key);
+        }
       }
     }
   }
@@ -1488,7 +1487,25 @@ window.TraceKit = TraceKit;
       forEach(window.location.search.substring(1).split('&'), function (i, segment) {
         var parts = segment.split('=');
         if (parts && parts.length === 2) {
-          qs[decodeURIComponent(parts[0])] = parts[1];
+          var key = decodeURIComponent(parts[0]);
+          var value = parts[1];
+
+          if (_filteredKeys) {
+            if (Array.prototype.indexOf && _filteredKeys.indexOf === Array.prototype.indexOf) {
+              if (_filteredKeys.indexOf(key) === -1) {
+                 qs[key] = value;
+              }
+            } else {
+              for (i = 0; i < _filteredKeys.length; i++) {
+                if (_filteredKeys[i] === key) {
+                   qs[key] = value;
+                }
+              }
+            }
+          } else {
+            qs[key] = value;
+          }
+
         }
       });
     }
@@ -1498,7 +1515,11 @@ window.TraceKit = TraceKit;
     }
 
     if (isEmpty(options.customData)) {
-      options.customData = _customData;
+      if (typeof _customData === 'function') {
+        options.customData = _customData();
+      } else {
+        options.customData = _customData;
+      }
     }
 
     if (isEmpty(options.tags)) {
@@ -1507,6 +1528,15 @@ window.TraceKit = TraceKit;
 
     var screen = window.screen || { width: getViewPort().width, height: getViewPort().height, colorDepth: 8 };
     var custom_message = options.customData && options.customData.ajaxErrorMessage;
+    var finalCustomData = options.customData;
+
+    try {
+      JSON.stringify(finalCustomData);
+    } catch (e) {
+      var msg = 'Cannot add custom data; may contain circular reference';
+      finalCustomData = { error: msg };
+      log('Raygun4JS: ' + msg);
+    }
 
     var payload = {
       'OccurredOn': new Date(),
@@ -1532,9 +1562,9 @@ window.TraceKit = TraceKit;
         },
         'Client': {
           'Name': 'raygun-js',
-          'Version': '1.8.1'
+          'Version': '1.10.0'
         },
-        'UserCustomData': options.customData,
+        'UserCustomData': finalCustomData,
         'Tags': options.tags,
         'Request': {
           'Url': document.location.href,

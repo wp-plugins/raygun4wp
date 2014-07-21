@@ -5,7 +5,7 @@ namespace Raygun4php {
   require_once realpath(__DIR__ . '/Raygun4PhpException.php');
   require_once realpath(__DIR__ . '/Uuid.php');
 
-  use Rhumsaa\Uuid\Uuid;
+  use Raygun4Php\Rhumsaa\Uuid\Uuid;
 
   class RaygunClient
   {
@@ -13,9 +13,22 @@ namespace Raygun4php {
     protected $version;
     protected $tags;
     protected $user;
+    protected $firstName;
+    protected $fullName;
+    protected $email;
+    protected $isAnonymous;
+    protected $uuid;
     protected $httpData;
     protected $useAsyncSending;
     protected $debugSending;
+    protected $disableUserTracking;
+
+    /**
+     * @var Array Parameter names to filter out of logged form data. Case insensitive.
+     * Accepts regular expressions when the name starts with a forward slash.
+     * Maps either to TRUE, or to a callable with $key and $value arguments.
+     */
+    protected $filterParams = array();
 
     private $host = 'api.raygun.io';
     private $path = '/entries';
@@ -30,12 +43,17 @@ namespace Raygun4php {
     * @param bool $debugSending If true, and $useAsyncSending is true, this will output the HTTP response code from posting
     * error messages. See the GitHub documentation for code meaning. This param does nothing if useAsyncSending is set to true.
     */
-    public function __construct($key, $useAsyncSending = true, $debugSending = false)
+    public function __construct($key, $useAsyncSending = true, $debugSending = false, $disableUserTracking = false)
     {
       $this->apiKey = $key;
       $this->useAsyncSending = $useAsyncSending;
       $this->debugSending = $debugSending;
-      $this->SetUser();
+
+      if (!$disableUserTracking) {
+        $this->SetUser();
+      }
+
+      $this->disableUserTracking = $disableUserTracking;
     }
 
     /*
@@ -114,16 +132,25 @@ namespace Raygun4php {
     *  of the calling application.
     *
     */
-    public function SetUser($user = null)
+    public function SetUser($user = null, $firstName = null, $fullName = null, $email = null, $isAnonymous = null, $uuid = null)
     {
+      $timestamp = time() + 60 * 60 * 24 * 30;
+
+      $this->firstName = $this->StoreOrRetrieveUserCookie('rgfirstname', $firstName);
+      $this->fullName = $this->StoreOrRetrieveUserCookie('rgfullname', $fullName);
+      $this->email = $this->StoreOrRetrieveUserCookie('rgemail', $email);
+
+      $this->uuid = $this->StoreOrRetrieveUserCookie('rguuidvalue', $uuid);
+      $this->isAnonymous = $this->StoreOrRetrieveUserCookie('rgisanonymous', $isAnonymous ? 'true' : 'false') == 'true' ? true : false;
+
       if (is_string($user))
       {
         $this->user = $user;
 
         if (php_sapi_name() != 'cli' && !headers_sent())
         {
-          setcookie('rguserid', $user, time() + 60 * 60 * 24 * 30);
-          setcookie('rguuid', 'false', time() + 60 * 60 * 24 * 30);
+          setcookie('rguserid', $user, $timestamp);
+          setcookie('rguuid', 'false', $timestamp);
         }
       }
       else
@@ -134,15 +161,45 @@ namespace Raygun4php {
 
           if (php_sapi_name() != 'cli' && !headers_sent())
           {
-            setcookie('rguserid', $this->user, time() + 60 * 60 * 24 * 30);
-            setcookie('rguuid', 'true', time() + 60 * 60 * 24 * 30);
+            setcookie('rguserid', $this->user, $timestamp);
+            setcookie('rguuid', 'true', $timestamp);
           }
         }
-        else
+        else if (array_key_exists('rguserid', $_COOKIE))
         {
           $this->user = $_COOKIE['rguserid'];
         }
+
+        $this->isAnonymous = $this->StoreOrRetrieveUserCookie('rgisanonymous', 'true') == 'true';
       }
+    }
+
+    private function StoreOrRetrieveUserCookie($key, $value)
+    {
+      $timestamp = time() + 60 * 60 * 24 * 30;
+
+      if (is_string($value))
+      {
+        if (php_sapi_name() != 'cli' && !headers_sent())
+        {
+          setcookie($key, $value, $timestamp);
+        }
+
+        return $value;
+      }
+      else
+      {
+        if (array_key_exists($key, $_COOKIE))
+        {
+          if ($_COOKIE[$key] != $value && php_sapi_name() != 'cli' && !headers_sent())
+          {
+            setcookie($key, $value, $timestamp);
+          }
+          return $_COOKIE[$key];
+        }
+      }
+
+      return null;
     }
 
     /*
@@ -160,9 +217,9 @@ namespace Raygun4php {
 
       if ($this->user != null)
       {
-        $message->Details->User = new RaygunIdentifier($this->user);
+        $message->Details->User = new RaygunIdentifier($this->user, $this->firstName, $this->fullName, $this->email, $this->isAnonymous, $this->uuid);
       }
-      else
+      else if (!$this->disableUserTracking)
       {
         $message->Details->User = new RaygunIdentifier($_COOKIE['rguserid']);
       }
@@ -215,7 +272,10 @@ namespace Raygun4php {
         throw new \Raygun4php\Raygun4PhpException("API not valid, cannot send message to Raygun");
       }
 
-      return $this->post($this->toJsonRemoveUnicodeSequences($message), realpath(__DIR__ . '/cacert.crt'));
+      $message = $this->filterParamsFromMessage($message);
+      $message = $this->toJsonRemoveUnicodeSequences($message);
+
+      return $this->post($message, realpath(__DIR__ . '/cacert.crt'));
     }
 
     private function post($data_to_send, $cert_path)
@@ -295,6 +355,83 @@ namespace Raygun4php {
       return preg_replace_callback("/\\\\u([a-f0-9]{4})/", function($matches){ return iconv('UCS-4LE','UTF-8',pack('V', hexdec("U$matches[1]"))); }, json_encode($struct));
     }
 
+    /**
+     * Optionally applies a value transformation to every matching key, as defined by {@link FilterParams}.
+     * Replaces the value by default, but also supports custom transformations through
+     * anonymous functions. Applies to form data, environment data, HTTP headers.
+     * Does not apply to GET parameters in the request URI.
+     * Filters out raw HTTP data in case any filters are defined, since we can't accurately filter it.
+     *
+     * @param RaygunMessage $message
+     * @param  string $replace Value to be inserted by default (unless specified otherwise by custom transformations).
+     * @return RaygunMessage
+     */
+    function filterParamsFromMessage($message, $replace = '[filtered]') {
+      $filterParams = $this->getFilterParams();
+
+      // Skip checks if none are defined
+      if(!$filterParams) {
+        return $message;
+      }
+
+      // Ensure all filters are callable
+      foreach($filterParams as $filterKey => $filterFn) {
+        if(!is_callable($filterFn)) {
+          $filterParams[$filterKey] = function($key, $val) use ($replace) {return $replace;};
+        }
+      }
+
+      $walkFn = function(&$val, $key) use ($filterParams) {
+        foreach($filterParams as $filterKey => $filterFn) {
+          if(
+            (strpos($filterKey, '/') === 0 && preg_match($filterKey, $key))
+            || (strpos($filterKey, '/') === FALSE && strtolower($filterKey) == strtolower($key))
+          ) {
+            $val = $filterFn($key, $val);
+          }
+        }
+      };
+
+      if($message->Details->Request->form) {
+        array_walk_recursive($message->Details->Request->form, $walkFn);
+      }
+
+      if($message->Details->Request->headers) {
+        array_walk_recursive($message->Details->Request->headers, $walkFn);
+      }
+
+      if($message->Details->Request->data) {
+        array_walk_recursive($message->Details->Request->data, $walkFn);
+      }
+
+      if($message->Details->UserCustomData) {
+        array_walk_recursive($message->Details->UserCustomData, $walkFn);
+      }
+
+      // Unset raw HTTP data since we can't accurately filter it
+      if($message->Details->Request->rawData) {
+        $message->Details->Request->rawData = null;
+      }
+
+      return $message;
+    }
+
+    /**
+     * @param Array $params
+     * @return Raygun4php\RaygunClient
+     */
+    function setFilterParams($params) {
+      $this->filterParams = $params;
+      return $this;
+    }
+
+    /**
+     * @return Array
+     */
+    function getFilterParams() {
+      return $this->filterParams;
+    }
+
     public function __destruct()
     {
       if ($this->httpData)
@@ -302,5 +439,6 @@ namespace Raygun4php {
         curl_close($this->httpData);
       }
     }
+
   }
 }

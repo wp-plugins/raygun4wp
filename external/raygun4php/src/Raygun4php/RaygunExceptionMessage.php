@@ -10,50 +10,102 @@ namespace Raygun4php
         public $StackTrace = array();
         public $FileName;
         public $Data;
-        //public $CatchingMethod;
 
         public function __construct($exception)
         {
             $exceptionClass = get_class($exception);
-            if ($exceptionClass != "ErrorException")
+
+            if ($exceptionClass != 'ErrorException')
             {
-                $this->Message = $exceptionClass.": ".$exception->getMessage();
+                $this->Message = $exceptionClass.': '.$exception->getMessage();
+                $this->BuildStackTrace($exception);
             }
             else
             {
-                $this->Message = "Error: ".$exception->getMessage();
+                $this->Message = 'Error: '.$exception->getMessage();
+                $this->BuildErrorTrace($exception);
             }
+
             $this->FileName = baseName($exception->getFile());
-            $this->BuildStackTrace($exception);
-            //$this->ClassName = $this->GetClassName();
+        }
+
+        private function BuildErrorTrace($error)
+        {
+          $traces = $error->getTrace();
+          $lines = array();
+
+          foreach ($traces as $trace) {
+            $line = new RaygunExceptionTraceLineMessage();
+
+            $fromManualSendError = false;
+            if (array_key_exists('function', $trace) &&
+                array_key_exists('class', $trace))
+            {
+              if ($trace['function'] == 'SendError' && $trace['class'] == 'Raygun4php\RaygunClient')
+              {
+                $fromManualSendError = true;
+              }
+            }
+
+            if (array_key_exists('args', $trace) && $fromManualSendError == true) {
+              $errorData = $trace['args'];
+
+              if (count($errorData) >= 2) {
+                $line->ClassName= $errorData[1];
+              }
+              if (count($errorData) >= 3) {
+                $line->FileName= $errorData[2];
+              }
+              if (count($errorData) >= 4) {
+                $line->LineNumber= $errorData[3];
+              }
+            }
+            else
+            {
+              $line = $this->BuildLine($trace);
+            }
+
+            $lines[] = $line;
+          }
+
+          $this->StackTrace = $lines;
         }
 
         private function BuildStackTrace($exception)
         {
             $traces = $exception->getTrace();
             $lines = array();
+
             foreach ($traces as $trace)
             {
-                $line = new RaygunExceptionTraceLineMessage();
-                if (array_key_exists("file", $trace))
-                {
-                $line->FileName = $trace["file"];
-                }
-                if (array_key_exists("class", $trace))
-                {
-                $line->ClassName = $trace["class"];
-                }
-                if (array_key_exists("function", $trace))
-                {
-                $line->MethodName = $trace["function"];
-                }
-                if (array_key_exists("line", $trace))
-                {
-                $line->LineNumber = $trace["line"];
-                }
-                $lines[] = $line;
+                $lines[] = $this->BuildLine($trace);
              }
+
             $this->StackTrace = $lines;
+        }
+
+        private function BuildLine($trace)
+        {
+            $line = new RaygunExceptionTraceLineMessage();
+
+            if (array_key_exists('file', $trace))
+            {
+              $line->FileName = $trace['file'];
+            }
+            if (array_key_exists('class', $trace))
+            {
+              $line->ClassName = $trace['class'];
+            }
+            if (array_key_exists('function', $trace))
+            {
+              $line->MethodName = $trace['function'];
+            }
+            if (array_key_exists('line', $trace))
+            {
+              $line->LineNumber = $trace['line'];
+            }
+
+            return $line;
         }
 
         private function GetClassName()
@@ -89,7 +141,7 @@ namespace Raygun4php
                     }
                 }
             }
-            if ($class != "")
+            if ($class != '')
             {
                 return $class;
             }

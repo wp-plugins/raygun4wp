@@ -1,7 +1,10 @@
-Raygun4php
+Raygun4PHP
 ==========
 
 [Raygun.io](http://raygun.io) provider for PHP 5.3+
+
+[![Build
+Status](https://secure.travis-ci.org/MindscapeHQ/raygun4php.png?branch=master)](http://travis-ci.org/MindscapeHQ/raygun4php)
 
 ## Installation
 
@@ -9,9 +12,9 @@ Firstly, ensure that **curl** is installed and enabled in your server's php.ini 
 
 ### With Composer
 
-Composer is a package management tool for PHP which automatically fetches dependencies and also supports autoloading - this is a low-impact way to get Raygun4php into your site.
+Composer is a package management tool for PHP which automatically fetches dependencies and also supports autoloading - this is a low-impact way to get Raygun4PHP into your site.
 
-1. If you use a *nix environment, [follow the instructions](http://getcomposer.org/doc/01-basic-usage.md#installation) to install Composer. Windows users can run [this installer](https://github.com/johnstevenson/composer-setup) to automatically add it to the path etc.
+1. If you use a *nix environment, [follow the instructions](http://getcomposer.org/doc/01-basic-usage.md#installation) to install Composer. Windows users can run [this installer](https://github.com/johnstevenson/composer-setup) to automatically add it to the Path.
 
 2. Inside your project's root directory create a composer.json file, containing:
 ```json
@@ -38,7 +41,7 @@ require (dirname(dirname(__FILE__)).'/vendor/Raygun4php/RaygunClient.php');
 ```
 ## Usage
 
-You can send both PHP errors and object-oriented exceptions to Raygun. An easy way to accomplish this is to create a file containing exception and error handlers which make calls to the appropriate Raygun4php functions. As above, import Raygun4php - if you're using Composer, just add `require_once 'vendor/autoload.php'`, or if not manually import RaygunClient.php.
+You can send both PHP errors and object-oriented exceptions to Raygun. An easy way to accomplish this is to create a file containing exception and error handlers which make calls to the appropriate Raygun4PHP functions. As above, import Raygun4PHP - if you're using Composer, just add `require_once 'vendor/autoload.php'`, or if not manually import RaygunClient.php.
 
 Then, create handlers that look something like this:
 
@@ -97,17 +100,13 @@ Windows default: *false*
 
 * If **$useAsyncSending** is *true*, and the script is running on a *nix platform, the message will be delivered asynchronously. SendError() and SendException() will return 0 if all went well.
 
-	Expected script return time: ~45ms
-
 * If **$useAsyncSending** is *false*, the script will block and receive the HTTP response.
 
-	Expected script return time: ~650ms if not in debug mode (still a 400% speedup over the inital 1.0 version of this library, upgrading is recommended)
-
-For Windows, *false* is the only effective option available due to a bug in SSL sending on IIS with certain versions of PHP. Passing in *true* will do nothing on this platform.
+*false* is the only effective option on Windows due to platform and library limitations within the supported versions.
 
 ### Debug mode
 
-New in 1.3, the client offers a debug mode in which the HTTP response code can be returned after a POST attempt. This can be useful when adding Raygun to your site. This is accessed by passing in *true* as the third parameter in the client constructor:
+The client offers a debug mode in which the HTTP response code can be returned after a POST attempt. This can be useful when adding Raygun to your site. This is accessed by passing in *true* as the third parameter in the client constructor:
 
 ```php
 $client = new \Raygun4php\RaygunClient("apiKey", $useAsyncSending, $debugMode);
@@ -125,8 +124,6 @@ If true is passed in, and **$useAsyncSending** is set to *false*, client->SendEx
 
 * **202**: Message received by Raygun API correctly
 * **403**: Invalid API key. Copy it from your Raygun Application Settings, it should be of the form `new RaygunClient("A+nUc2dLh27vbh8abls7==")`
-* **400**: Bad message. This may indicate an unparsable payload, an invalid timestamp passed in or a bug in the provider - please contact us if you continue to see this.
-* **500**: Server error- the Raygun API failed to parse the payload correctly; again please contact us if you see this.
 
 ### Version numbers
 
@@ -134,11 +131,61 @@ You can transmit the version number of your PHP project along with the message b
 
 ### User tracking
 
-You can call $client->SetUser($user), passing in a string representing the username or email address of the current user of the calling application. This will be attached to the message and visible in the dashboard. This method is optional - if it is not called, a random identifier will be used. If you use this, and the user changes (log in/out), be sure to call it again passing in the new user (or just call $client->SetUser() to assign a new random identifier).
+**New in 1.5: additional data support**
 
-Note that this data is stored as a cookie. If you do not call SetUser the default is to store a random UUID to represent the user.
+You can call $client->SetUser, passing in some or all of the following data, which will be used to provide an affected user count and reports:
 
-This feature can be used in CLI mode by calling SetUser(string) at the start of your session.
+```php
+SetUser($user = null, $firstName = null, $fullName = null, $email = null, $isAnonymous = null, $uuid = null)
+```
+
+`$user` should be a unique identifier which is used to identify your users. If you set this to their email address, be sure to also set the $email parameter too.
+
+This feature and values are optional if you wish to disable it for privacy concerns. To do so, pass `true` in as the third parameter to the RaygunClient constructor.
+
+Note that this data is stored as cookies. If you do not call SetUser the default is to store a random UUID to represent the user.
+
+This feature can be used in CLI mode by calling SetUser() at the start of your session.
+
+### Filtering Sensitive Data
+
+Some error data will be too sensitive to transmit to an external service, such as credit card details or passwords. Since this data is very application specific, Raygun doesn't filter out anything by default. You can configure to either replace or otherwise transform specific values based on their keys. These transformations apply to form data (`$_POST`), custom user data, HTTP headers, and environment data (`$_SERVER`). It does not filter the URL or its `$_GET` parameters, or custom message strings. Since Raygun doesn't log method arguments in stack traces, those don't need filtering. All key comparisons are case insensitive.
+
+```php
+$client = new \Raygun4php\RaygunClient("apiKey");
+$client->setFilterParams(array(
+	'password' => true,
+	'creditcardnumber' => true,
+	'ccv' => true,
+	'php_auth_pw' => true, // filters basic auth from $_SERVER
+));
+// Example input: array('Username' => 'myuser','Password' => 'secret')
+// Example output: array('Username' => 'myuser','Password' => '[filtered]')
+```
+
+You can also define keys as regular expressions:
+
+```php
+$client = new \Raygun4php\RaygunClient("apiKey");
+$client->setFilterParams(array(
+	'/^credit/i' => true,
+));
+// Example input: array('CreditCardNumber' => '4111111111111111','CreditCardCcv' => '123')
+// Example output: array('CreditCardNumber' => '[filtered]','CreditCardCcv' => '[filtered]')
+```
+
+In case you want to retain some hints on the data rather than removing it completely, you can also apply custom transformations through PHP's anonymous functions. The following example truncates all keys starting with "address".
+
+```php
+$client = new \Raygun4php\RaygunClient("apiKey");
+$client->setFilterParams(array(
+	'Email' => function($key, $val) {return substr($val, 0, 5) . '...';}
+));
+// Example input: array('Email' => 'test@test.com')
+// Example output: array('Email' => 'test@...')
+```
+
+Note that when any filters are defined, the Raygun error will no longer contain the raw HTTP data, since there's no effective way to filter it.
 
 ## Troubleshooting
 
@@ -156,6 +203,10 @@ If, when running a PHP script from the command line on *nix operating systems, y
 
 ## Changelog
 
+- 1.5.1: Guard against intermittent user id cookie being null; overload for disabling user tracking
+- 1.5.0: Add enhanced user data support; fix null backtrace frames that could occur in 1.4
+- 1.4.0: Added Sensitive Data Filtering; improved Error backtraces; Travis CI enabled
+- 1.3.6: Move included Rhumsaa\Uuid lib into this namespace to prevent collisions if already included
 - 1.3.5: Fixed possible bug in async curl logic
 - 1.3.4: Bugfix in request message for testing
 - 1.3.3: Hotfix for script error in v1.3.2
