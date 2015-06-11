@@ -104,6 +104,15 @@ Windows default: *false*
 
 *false* is the only effective option on Windows due to platform and library limitations within the supported versions.
 
+### Proxies
+
+A HTTP proxy can be set if your environment can't connect out through PHP or the `curl` binrary natively:
+
+```php
+$client = new \Raygun4php\RaygunClient("apiKey");
+$client->setProxy('http://someproxy:8080');
+```
+
 ### Debug mode
 
 The client offers a debug mode in which the HTTP response code can be returned after a POST attempt. This can be useful when adding Raygun to your site. This is accessed by passing in *true* as the third parameter in the client constructor:
@@ -129,7 +138,28 @@ If true is passed in, and **$useAsyncSending** is set to *false*, client->SendEx
 
 You can transmit the version number of your PHP project along with the message by calling `SetVersion()` on your RaygunClient after it is instantiated - this is optional but recommended as the version number is considered to be first-class data for a message.
 
-### User tracking
+### Adding Tags
+
+Tags can be added to error data to provide extra information and to help filtering errors within Raygun.
+They are provided as an array of strings or numbers passed as the `5th argument to the SendError function` and as the `2nd argument to the SendException function`.
+
+The declaration of the exception and error handlers using tags could look something like this:
+
+```php
+$tags = array("testing-enviroment", "machine-4");
+
+function error_handler($errno, $errstr, $errfile, $errline) {
+	global $client, $tags;
+  	$client->SendError($errno, $errstr, $errfile, $errline, $tags);
+}
+
+function exception_handler($exception) {
+	global $client, $tags;
+	$client->SendException($exception, $tags);
+}
+```
+
+### Affected user tracking
 
 **New in 1.5: additional data support**
 
@@ -203,6 +233,10 @@ If, when running a PHP script from the command line on *nix operating systems, y
 
 ## Changelog
 
+-	1.6.1: Assign ClassName as exceptionClass
+- 1.6.0: Added HTTP proxy support, support X-Forwarded-For, null server var guards
+- 1.5.3: Unify property casing (internal change)
+- 1.5.2: Prevent error when query_string isn't present in $_SERVER
 - 1.5.1: Guard against intermittent user id cookie being null; overload for disabling user tracking
 - 1.5.0: Add enhanced user data support; fix null backtrace frames that could occur in 1.4
 - 1.4.0: Added Sensitive Data Filtering; improved Error backtraces; Travis CI enabled
