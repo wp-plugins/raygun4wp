@@ -164,27 +164,27 @@ TraceKit.report = (function reportModuleWrapper() {
         }
         else
         {
-        if (lastExceptionStack) {
-            TraceKit.computeStackTrace.augmentStackTraceWithInitialElement(lastExceptionStack, url, lineNo, message);
-            stack = lastExceptionStack;
-            lastExceptionStack = null;
-            lastException = null;
-        } else {
-            var location = {
-                'url': url,
-                'line': lineNo,
-                'column': columnNo
-            };
-            location.func = TraceKit.computeStackTrace.guessFunctionName(location.url, location.line);
-            location.context = TraceKit.computeStackTrace.gatherContext(location.url, location.line);
-            stack = {
-                'mode': 'onerror',
-                'message': message,
-                'url': document.location.href,
-                'stack': [location],
-                'useragent': navigator.userAgent
-            };
-        }
+            if (lastExceptionStack) {
+                TraceKit.computeStackTrace.augmentStackTraceWithInitialElement(lastExceptionStack, url, lineNo, message);
+                stack = lastExceptionStack;
+                lastExceptionStack = null;
+                lastException = null;
+            } else {
+                var location = {
+                    'url': url,
+                    'line': lineNo,
+                    'column': columnNo
+                };
+                location.func = TraceKit.computeStackTrace.guessFunctionName(location.url, location.line);
+                location.context = TraceKit.computeStackTrace.gatherContext(location.url, location.line);
+                stack = {
+                    'mode': 'onerror',
+                    'message': message,
+                    'url': document.location.href,
+                    'stack': [location],
+                    'useragent': navigator.userAgent
+                };
+            }
         }
 
         notifyHandlers(stack, 'from window.onerror');
@@ -325,6 +325,10 @@ TraceKit.computeStackTrace = (function computeStackTraceWrapper() {
      * @return {string} Source contents.
      */
     function loadSource(url) {
+        if (typeof url !== 'string') {
+          return [];
+        }
+        
         if (!TraceKit.remoteFetching) { //Only attempt request if remoteFetching is on.
             return '';
         }
@@ -360,7 +364,7 @@ TraceKit.computeStackTrace = (function computeStackTraceWrapper() {
 
             url = url || "";
 
-            if (url.indexOf(document.domain) !== -1) {
+            if (url.indexOf && url.indexOf(document.domain) !== -1) {
                 source = loadSource(url);
             }
             sourceCache[url] = source ? source.split('\n') : [];
@@ -629,8 +633,8 @@ TraceKit.computeStackTrace = (function computeStackTraceWrapper() {
             return null;
         }
 
-        var chrome = /^\s*at (?:((?:\[object object\])?\S+(?: \[as \S+\])?) )?\(?((?:file|http|https):.*?):(\d+)(?::(\d+))?\)?\s*$/i,
-            gecko = /^\s*(\S*)(?:\((.*?)\))?@((?:file|http|https).*?):(\d+)(?::(\d+))?\s*$/i,
+        var chrome = /^\s*at (.*?) ?\(?((?:file|http|https|chrome-extension):.*?):(\d+)(?::(\d+))?\)?\s*$/i,
+            gecko = /^\s*(.*?)(?:\((.*?)\))?@?((?:file|http|https|chrome):.*?):(\d+)(?::(\d+))?\s*$/i,
             winjs = /^\s*at (?:((?:\[object object\])?.+) )?\(?((?:ms-appx|http|https):.*?):(\d+)(?::(\d+))?\)?\s*$/i,
             lines = ex.stack.split('\n'),
             stack = [],
@@ -678,6 +682,9 @@ TraceKit.computeStackTrace = (function computeStackTraceWrapper() {
 
         if (stack[0] && stack[0].line && !stack[0].column && reference) {
             stack[0].column = findSourceInLine(reference[1], stack[0].url, stack[0].line);
+        } else if (!stack[0].column && typeof ex.columnNumber !== 'undefined') {
+            // Firefox column number
+            stack[0].column = ex.columnNumber + 1;
         }
 
         if (!stack.length) {
@@ -707,7 +714,7 @@ TraceKit.computeStackTrace = (function computeStackTraceWrapper() {
         var stacktrace = ex.stacktrace;
 
         var testRE = / line (\d+), column (\d+) in (?:<anonymous function: ([^>]+)>|([^\)]+))\((.*)\) in (.*):\s*$/i,
-            lines = stacktrace.split('\n'),
+            lines = stacktrace !== null ? stacktrace.split('\n') : stacktrace,
             stack = [],
             parts;
 
@@ -958,6 +965,12 @@ TraceKit.computeStackTrace = (function computeStackTraceWrapper() {
                 item.func = parts[1];
             }
 
+            if (typeof item.func === 'undefined') {
+              try {
+                item.func = parts.input.substring(0, parts.input.indexOf('{'))
+              } catch (e) { }
+            }
+
             if ((source = findSourceByFunctionBody(curr))) {
                 item.url = source.url;
                 item.line = source.line;
@@ -1086,7 +1099,7 @@ TraceKit.computeStackTrace = (function computeStackTraceWrapper() {
  * Extends support for global error handling for asynchronous browser
  * functions. Adopted from Closure Library's errorhandler.js
  */
-(function extendToAsynchronousCallbacks() {
+TraceKit.extendToAsynchronousCallbacks = function () {
     var _helper = function _helper(fnName) {
         var originalFn = window[fnName];
         window[fnName] = function traceKitAsyncExtension() {
@@ -1109,7 +1122,7 @@ TraceKit.computeStackTrace = (function computeStackTraceWrapper() {
 
     _helper('setTimeout');
     _helper('setInterval');
-}());
+};
 
 //Default options:
 if (!TraceKit.remoteFetching) {

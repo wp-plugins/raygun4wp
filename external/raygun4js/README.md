@@ -8,6 +8,18 @@ Raygun.io plugin for JavaScript
 
 Run `bower install raygun4js`
 
+### CDN
+
+Raygun4JS is now available from our content delivery network:
+
+```html
+<script type="text/javascript" src="//cdn.raygun.io/raygun4js/raygun.min.js"></script>
+```
+
+It is available over both HTTP and HTTPS.
+
+You can reference any of the scripts below. The scripts in the /raygun4js/ directory will always be the latest release, and specific releases are available undern /raygun4js/1.x.x/.
+
 ### From NuGet
 
 Visual Studio users can get it by opening the Package Manager Console and typing `Install-Package raygun4js`
@@ -84,7 +96,20 @@ Pass in an object as the second parameter to init() containing one or more of th
 
 `ignoreAjaxAbort` - User-aborted Ajax calls result in errors - if this option is true, these will not be sent.
 
+`ignoreAjaxError` - Ajax requests that return error codes will not be sent as errors to Raygun if this options is true.
+
 `debugMode` - Raygun4JS will log to the console when sending errors.
+
+`wrapAsynchronousCallbacks` - if set to `false`, async callback functions triggered by setTimeout/setInterval will not be wrapped when attach() is called. _Defaults to true_
+
+`ignore3rdPartyErrors` - ignores any errors that have no stack trace information. This will discard any errors that occur completely
+within 3rd party scripts - if code loaded from the current domain called the 3rd party function, it will have at least one stack line
+and will still be sent.
+
+`excludedHostnames` - Prevents errors from being sent from certain hostnames (domains) by providing an array of strings or RegExp
+objects (for partial matches). Each should match the hostname or TLD that you want to exclude. Note that protocols are not tested.
+
+`excludedUserAgents` - Prevents errors from being sent from certain user agents by providing an array of strings. This is very helpful to exclude errors reported by certain browsers or test automation with `CasperJS`, `PhantomJS` or any other testing utility that sends a custom user agent. If a part of the client's `navigator.userAgent` matches one of the given strings in the array, then the client will be excluded from error reporting.
 
 An example:
 
@@ -92,8 +117,49 @@ An example:
 Raygun.init('apikey', {
   allowInsecureSubmissions: true,
   ignoreAjaxAbort: true,
-  debugMode: true
+  ignoreAjaxError: true,
+  debugMode: true,
+  ignore3rdPartyErrors: false,
+  excludedHostnames: ['localhost', '\.development']
+  excludedUserAgents: ['CasperJS', 'Chrome/42', 'Android']
 }).attach();
+```
+
+### Multiple Raygun objects on a single page
+
+You can now have multiple Raygun objects in global scope. This lets you set them up with different API keys for instance, and allow you to send different errors to more than one application in the Raygun web app.
+
+To create a new Raygun object and use it call:
+
+```javascript
+var secondRaygun = Raygun.constructNewRaygun();
+secondRaygun.init('apikey');
+secondRaygun.send(...)
+```
+
+Only one Raygun object can be attached as the window.onerror handler at one time, as *onerror* can only be bound to one function at once. Whichever Raygun object had `attach()` called on it last will handle the unhandle errors for the page.
+
+### Callback Events
+
+#### onBeforeSend
+
+Call `Raygun.onBeforeSend()`, passing in a function which takes one parameter (see the example below). This callback function will be called immediately before the payload is sent. The one parameter it gets will be the payload that is about to be sent. Thus from your function you can inspect the payload and decide whether or not to send it.
+
+From the supplied function, you should return either the payload (intact or mutated as per your needs), or `false`.
+
+If your function returns a truthy object, Raygun4JS will attempt to send it as supplied. Thus, you can mutate it as per your needs - preferably only the values if you wish to filter out data that is not taken care of by `filterSensitiveData()`. You can also of course return it as supplied.
+
+If, after inspecting the payload, you wish to discard it and abort the send to Raygun, simply return `false`.
+
+By example:
+
+```javascript
+var myBeforeSend = function (payload) {
+  console.log(payload); // Modify the payload here if necessary
+  return payload; // Return false here to abort the send
+}
+
+Raygun.onBeforeSend(myBeforeSend);
 ```
 
 ### Sending custom data
@@ -120,6 +186,22 @@ You can also pass custom data with manual send calls, with the second parameter.
 Raygun.send(err, [{customName: 'customData'}];
 ```
 
+#### Providing custom data with a callback
+
+To send the state of variables at the time an error occurs, you can pass withCustomData a callback function. This needs to return an object. By example:
+
+```javascript
+var desiredNum = 1;
+
+function getMyData() {
+ return { num: desiredNum };
+}
+
+Raygun.init('apikey').attach().withCustomData(getMyData);
+```
+
+`getMyData` will be called when Raygun4JS is about to send an error, which will construct the custom data. This will be merged with any custom data provided on a Raygun.send() call.
+
 ### Adding tags
 
 The Raygun dashboard can also display tags for errors. These are arrays of strings or Numbers. This is done similar to the above custom data, like so:
@@ -138,7 +220,21 @@ Pass tags in as the third parameter:
 Raygun.send(err, null, ['tag']];
 ```
 
-### Unique user tracking
+#### Adding tags with a callback function
+
+As above for custom data, withTags() can now also accept a callback function. This will be called when the provider is about to send, to construct the tags. The function you pass to withTags() should return an array (ideally of strings/Numbers/Dates).
+
+### Affected user tracking
+
+By default, Raygun4JS assigns a unique anonymous ID for the current user. This is stored as a cookie. If the current user changes, to reset it and assign a new ID you can call:
+
+```js
+Raygun.resetAnonymousUser();
+```
+
+To disable anonymous user tracking, call `Raygun.init('apikey', { disableAnonymousUserTracking: true });`.
+
+#### Rich user data
 
 You can provide additional information about the currently logged in user to Raygun by calling:
 
@@ -166,6 +262,8 @@ setUser: function (user, isAnonymous, email, fullName, firstName, uuid)
 
 This will be transmitted with each message. A count of unique users will appear on the dashboard in the individual error view. If you provide an email address, the user's Gravatar will be displayed (if they have one). This method is optional; if it is not called no user tracking will be performed. Note that if the user context changes (such as in an SPA), you should call this method again to update it.
 
+**Resetting the user:** you can now pass in empty strings (or false to `isAnonymous`) to reset the current user for login/logout scenarios.
+
 ### Version filtering
 
 You can set a version for your app by calling:
@@ -176,15 +274,31 @@ Raygun.setVersion('1.0.0.0');
 
 This will allow you to filter the errors in the dashboard by that version. You can also select only the latest version, to ignore errors that were triggered by ancient versions of your code. The parameter needs to be a string in the format x.x.x.x, where x is a positive integer.
 
-### Filter sensitive request data
+### Filtering sensitive data
 
-The library automatically transmits query string key-values. To filter sensitive keys from this, call:
+You can blacklist keys to prevent their values from being sent it the payload by providing an array of key names:
 
 ```javascript
-Raygun.filterSensitiveData(['pwd']);
+Raygun.filterSensitiveData(['password', 'credit_card']);
 ```
 
-It accepts an array of strings. If a key in the query string matches any in this array, it won't be sent.
+By default this is applied to the UserCustomData object only (legacy behavior). To apply this to any key-value pair, you can change the filtering scope:
+
+```javascript
+// Filter any key in the payload
+Raygun.setFilterScope('all');
+
+// Just filter the custom data (default)
+Raygun.setFilterScope('customData');
+```
+
+You can also pass RegExp objects in the array to `filterSensitiveData`, for fuzzy matching of keys:
+
+```javascript
+// Remove any keys that begin with 'credit'
+var creditCardDataRegex = /credit\D*/;
+Raygun.filterSensitiveData([creditCardDataRegex]);
+```
 
 ### Source maps support
 
@@ -194,11 +308,41 @@ Raygun4JS now features source maps support through the transmission of column nu
 
 The provider has a feature where if errors are caught when there is no network activity they can be saved (in Local Storage). When an error arrives and connectivity is regained, previously saved errors are then sent. This is useful in environments like WinJS, where a mobile device's internet connection is not constant.
 
+### Errors in scripts on other domains
+
+Browsers have varying behavior for errors that occur in scripts located on domains that are not the origin. Many of these will be listed in Raygun as 'Script Error', or will contain junk stack traces. You can filter out these errors by settings this:
+
+```javascript
+Raygun.init('apikey', { ignore3rdPartyErrors: true });
+```
+
+There is also an option to whitelist domains which you **do** want to allow transmission of errors to Raygun, which accepts the domains as an array of strings:
+
+```javascript
+Raygun.init('apikey', { ignore3rdPartyErrors: true }).whitelistCrossOriginDomains(["jquery.com"]);
+```
+
+This can be used to allow errors from remote sites and CDNs.
+
+The provider will default to attempt to send errors from subdomains - for instance if the page is loaded from foo.com, and a script is loaded from cdn.foo.com, that error will be transmitted on a best-effort basis.
+
+To get full stack traces from cross-origin domains or subdomains, these requirements should be met:
+
+* The remote domain should have `Access-Control-Allow-Origin` set (to include the domain where raygun4js is loaded from).
+
+* For Chrome the `script` tag must also have `crossOrigin="Anonymous"` set.
+
+* Recent versions of Firefox (>= 31) will transmit errors from remote domains will full stack traces if the header is set (`crossOrigin` on script tag not needed).
+
+In Chrome, if the origin script tag and remote domain do not meet these requirements the cross-origin error will not be sent.
+
+Other browsers may send on a best-effort basis (version dependent) if some data is available but potentially without a useful stacktrace. The provider will cancel the send if no data is available.
+
 #### Options
 
 Offline saving is **disabled by default.** To get or set this option, call the following after your init() call:
 
-```js
+```javascript
 Raygun.saveIfOffline(boolean)
 ```
 
@@ -208,29 +352,4 @@ Limited support is available for IE 8 and 9 - errors will only be saved if the r
 
 ## Release History
 
-- 1.10.0 - Added enhanced affected user data to setUser; ported latest Tracekit improvements
-- 1.9.2 - Fix bug in filter query
-- 1.9.1 - Added function to filter sensitive query string
-- 1.9.0 - Add ignoreAjaxAbort option; provide vanilla build without jQuery hooks
-- 1.8.4 - Guard against circular reference in custom data
-- 1.8.3 - Allow withCustomData to accept a function to provide a customdata object; fix undefined URL issue from Ajax; rm duplicated Tracekit ajax hook
-- 1.8.2 - Fixed bug in Tracekit which caused 'Cannot call method indexOf' of undefined error
-- 1.8.1 - Added meaningful message for Ajax errors, fixed debugmode logging bug
-- 1.8.0 - Add Offline Saving feature; add support for WinJS
-- 1.7.2 - Fixed tags not being included when error caught from global window.onerror handler
-- 1.7.1 - Fixed broken withTags when no other custom data provided on Send
-- 1.7.0 - Added source maps support by transmitting column numbers (from supported browsers)
-- 1.6.1 - Fixed an issue with not supplying options to processUnhandledException
-- 1.6.0 - Added support for attaching Tags, added NuGet package
-- 1.5.2 - Added Bower package; minor bugfix for Ajax functionality
-- 1.5.1 - Capture data submitted by jQuery AJAX calls
-- 1.5.0 - Allow IE8 to submit errors over HTTP, updated TraceKit to the latest revision
-- 1.4.1 - Fix bug with using jQuery AJAX calls with >= v1.5 of jQuery
-- 1.4.0 - AJAX errors will display status code instead of script error
-- 1.3.3 - Fixed regression where send()) would no longer attach a custom data object parameter
-- 1.3.2 - Fixed the need to call attach() (if only using manual sending)
-- 1.3.1 - Added user tracking and version tracking functionality
-- 1.3.0 - Updated to latest TraceKit, included removed jQuery support from TraceKit
-- 1.2.1 - Added jQuery AJAX error support
-- 1.2.0 - Changed from QueryString approach to sending data to using an ajax post with CORS
-- 1.0.1 - Initial Release
+[View the changelog here](CHANGELOG.md)

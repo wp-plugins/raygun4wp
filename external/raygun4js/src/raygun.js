@@ -6,21 +6,32 @@
  * Licensed under the MIT license.
  */
 
-(function (window, $, undefined) {
+var raygunFactory = function (window, $, undefined) {
+
+
   // pull local copy of TraceKit to handle stack trace collection
-  var _traceKit = TraceKit.noConflict(),
+  var _traceKit = TraceKit,
       _raygun = window.Raygun,
       _raygunApiKey,
       _debugMode = false,
       _allowInsecureSubmissions = false,
       _ignoreAjaxAbort = false,
+      _ignoreAjaxError = false,
       _enableOfflineSave = false,
+      _ignore3rdPartyErrors = false,
+      _disableAnonymousUserTracking = false,
+      _wrapAsynchronousCallbacks = false,
       _customData = {},
       _tags = [],
       _user,
       _version,
       _filteredKeys,
+      _whitelistedScriptDomains = [],
+      _beforeSendCallback,
       _raygunApiUrl = 'https://api.raygun.io',
+      _excludedHostnames = null,
+      _excludedUserAgents = null,
+      _filterScope = 'customData',
       $document;
 
   if ($) {
@@ -34,6 +45,14 @@
       return Raygun;
     },
 
+    constructNewRaygun: function () {
+      var rgInstance = window.raygunFactory(window, window.jQuery);
+      window.raygunJsUrlFactory(window, rgInstance);
+
+      return rgInstance;
+    },
+
+
     init: function(key, options, customdata) {
       _raygunApiKey = key;
       _traceKit.remoteFetching = false;
@@ -43,10 +62,22 @@
       {
         _allowInsecureSubmissions = options.allowInsecureSubmissions || false;
         _ignoreAjaxAbort = options.ignoreAjaxAbort || false;
+        _ignoreAjaxError = options.ignoreAjaxError || false;
+        _disableAnonymousUserTracking = options.disableAnonymousUserTracking || false;
+        _excludedHostnames = options.excludedHostnames || false;
+        _excludedUserAgents = options.excludedUserAgents || false;
+
+        if (typeof options.wrapAsynchronousCallbacks !== 'undefined') {
+          _wrapAsynchronousCallbacks = options.wrapAsynchronousCallbacks;
+        }
 
         if (options.debugMode)
         {
           _debugMode = options.debugMode;
+        }
+        if (options.ignore3rdPartyErrors)
+        {
+          _ignore3rdPartyErrors = true;
         }
       }
 
@@ -62,14 +93,20 @@
 
     withTags: function (tags) {
       _tags = tags;
+      return Raygun;
     },
 
     attach: function () {
       if (!isApiKeyConfigured()) {
-        return;
+        return Raygun;
       }
       _traceKit.report.subscribe(processUnhandledException);
-      if ($document) {
+
+      if (_wrapAsynchronousCallbacks) {
+        _traceKit.extendToAsynchronousCallbacks();
+      }
+
+      if ($document && !_ignoreAjaxError) {
         $document.ajaxError(processJQueryAjaxError);
       }
       return Raygun;
@@ -104,23 +141,27 @@
       _user = {
         'Identifier': user
       };
-      if(isAnonymous) {
+      if(typeof isAnonymous !== 'undefined') {
         _user['IsAnonymous'] = isAnonymous;
       }
-      if(email) {
+      if(typeof email !== 'undefined') {
         _user['Email'] = email;
       }
-      if(fullName) {
+      if(typeof fullName !== 'undefined') {
         _user['FullName'] = fullName;
       }
-      if(firstName) {
+      if(typeof firstName !== 'undefined') {
         _user['FirstName'] = firstName;
       }
-      if(uuid) {
+      if(typeof uuid !== 'undefined') {
         _user['UUID'] = uuid;
       }
 
       return Raygun;
+    },
+
+    resetAnonymousUser: function () {
+      _private.clearCookie('raygun4js-userid');
     },
 
     setVersion: function (version) {
@@ -135,9 +176,91 @@
 
       return Raygun;
     },
+
     filterSensitiveData: function (filteredKeys) {
       _filteredKeys = filteredKeys;
       return Raygun;
+    },
+
+    setFilterScope: function (scope) {
+      if (scope === 'customData' || scope === 'all') {
+        _filterScope = scope;
+      }
+      return Raygun;
+    },
+
+    whitelistCrossOriginDomains: function (whitelist) {
+      _whitelistedScriptDomains = whitelist;
+      return Raygun;
+    },
+
+    onBeforeSend: function (callback) {
+      _beforeSendCallback = callback;
+
+      return Raygun;
+    }
+  };
+
+  var _private = Raygun._private = Raygun._private || {},
+    _seal = Raygun._seal = Raygun._seal || function () {
+      delete Raygun._private;
+      delete Raygun._seal;
+      delete Raygun._unseal;
+    },
+    _unseal = Raygun._unseal = Raygun._unseal || function () {
+      Raygun._private = _private;
+      Raygun._seal = _seal;
+      Raygun._unseal = _unseal;
+    };
+
+  _private.getUuid = function () {
+      function _p8(s) {
+          var p = (Math.random().toString(16)+"000000000").substr(2,8);
+          return s ? "-" + p.substr(0,4) + "-" + p.substr(4,4) : p ;
+      }
+      return _p8() + _p8(true) + _p8(true) + _p8();
+  };
+
+  _private.createCookie = function (name,value,hours) {
+    var expires;
+      if (hours) {
+        var date = new Date();
+        date.setTime(date.getTime()+(hours*60*60*1000));
+        expires = "; expires="+date.toGMTString();
+      }
+      else {
+        expires = "";
+      }
+
+      document.cookie = name+"="+value+expires+"; path=/";
+  };
+
+  _private.readCookie = function (name) {
+      var nameEQ = name + "=";
+      var ca = document.cookie.split(';');
+      for(var i=0;i < ca.length;i++) {
+          var c = ca[i];
+          while (c.charAt(0) === ' ') {
+            c = c.substring(1,c.length);
+          }
+          if (c.indexOf(nameEQ) === 0) {
+            return c.substring(nameEQ.length,c.length);
+          }
+      }
+      return null;
+  };
+
+  _private.clearCookie = function (key) {
+      _private.createCookie(key, '',-1);
+  };
+
+  _private.log = function(message, data) {
+    if (window.console && window.console.log && _debugMode) {
+      window.console.log(message);
+
+      if (data) {
+        window.console.log(data);
+      }
     }
   };
 
@@ -179,30 +302,25 @@
     }
 
     Raygun.send(thrownError || event.type, {
-      status: jqXHR.status,
-      statusText: jqXHR.statusText,
-      type: ajaxSettings.type,
-      url: ajaxSettings.url,
-      ajaxErrorMessage: message,
-      contentType: ajaxSettings.contentType,
-      data: ajaxSettings.data ? ajaxSettings.data.slice(0, 10240) : undefined });
+        status: jqXHR.status,
+        statusText: jqXHR.statusText,
+        type: ajaxSettings.type,
+        url: ajaxSettings.url,
+        ajaxErrorMessage: message,
+        contentType: ajaxSettings.contentType,
+        requestData: ajaxSettings.data && ajaxSettings.data.slice ? ajaxSettings.data.slice(0, 10240) : undefined,
+        responseData: jqXHR.responseText && jqXHR.responseText.slice ? jqXHR.responseText.slice(0, 10240) : undefined,
+        activeTarget: event.target && event.target.activeElement ? event.target.activeElement.outerHTML : undefined
+      });
   }
 
-  function log(message, data) {
-    if (window.console && window.console.log && _debugMode) {
-      window.console.log(message);
 
-      if (data) {
-        window.console.log(data);
-      }
-    }
-  }
 
   function isApiKeyConfigured() {
     if (_raygunApiKey && _raygunApiKey !== '') {
       return true;
     }
-    log("Raygun API key has not been configured, make sure you call Raygun.init(yourApiKey)");
+    _private.log("Raygun API key has not been configured, make sure you call Raygun.init(yourApiKey)");
     return false;
   }
 
@@ -239,7 +357,7 @@
     return Math.floor(Math.random() * 9007199254740993);
   }
 
-  function getViewPort() {
+  function getViewPort () {
     var e = document.documentElement,
     g = document.getElementsByTagName('body')[0],
     x = window.innerWidth || e.clientWidth || g.clientWidth,
@@ -257,7 +375,7 @@
         localStorage[key] = data;
       }
     } catch (e) {
-      log('Raygun4JS: LocalStorage full, cannot save exception');
+      _private.log('Raygun4JS: LocalStorage full, cannot save exception');
     }
   }
 
@@ -270,20 +388,153 @@
   }
 
   function sendSavedErrors() {
-    if (localStorageAvailable() && localStorage.length > 0) {
+    if (localStorageAvailable() && localStorage && localStorage.length > 0) {
         for (var key in localStorage) {
         if (key.substring(0, 9) === 'raygunjs=') {
-          sendToRaygun(JSON.parse(localStorage[key]));
-
-          localStorage.removeItem(key);
+          try {
+            sendToRaygun(JSON.parse(localStorage[key]));
+          } catch(e) {
+            _private.log('Raygun4JS: Invalid JSON object in LocalStorage');
+          }
+          
+          try {
+            localStorage.removeItem(key);
+          } catch(e) {
+            _private.log('Raygun4JS: Unable to remove error');
+          }
         }
       }
     }
   }
 
+  function ensureUser() {
+    if (!_user && !_disableAnonymousUserTracking) {
+      var userKey = 'raygun4js-userid';
+      var rgUserId = _private.readCookie(userKey);
+      var anonymousUuid;
+
+      if (!rgUserId) {
+        anonymousUuid = _private.getUuid();
+
+        _private.createCookie(userKey, anonymousUuid, 24 * 31);
+      } else {
+        anonymousUuid = rgUserId;
+      }
+
+      Raygun.setUser(anonymousUuid, true, null, null, null, anonymousUuid);
+    }
+  }
+
+  function filterValue(key, value) {
+    if (_filteredKeys) {
+      for (var i = 0; i < _filteredKeys.length; i++) {
+        if (typeof _filteredKeys[i] === 'object' && typeof _filteredKeys[i].exec === 'function') {
+          if (_filteredKeys[i].exec(key) !== null) {
+            return '[removed by filter]';
+          }
+        }
+        else if (_filteredKeys[i] === key) {
+            return '[removed by filter]';
+        }
+      }
+    }
+
+    return value;
+  }
+
+  function filterObject(reference, parentKey) {
+      if (reference == null) {
+          return reference;
+      }
+
+      if (Object.prototype.toString.call(reference) !== '[object Object]') {
+          return reference;
+      }
+
+      for (var propertyName in reference) {
+          var propertyValue = reference[propertyName];
+
+          if (propertyValue == null) {
+              continue;
+          }
+
+          if (Object.prototype.toString.call(propertyValue) === '[object Object]') {
+            if ((parentKey !== 'Details' || propertyName !== 'Client')) {
+              reference[propertyName] = filterObject(filterValue(propertyName, propertyValue), propertyName);
+            }
+          } else {
+            if (typeof parentKey !== 'undefined' || propertyName !== 'OccurredOn') {
+              reference[propertyName] = filterValue(propertyName, propertyValue);
+            }
+          }
+      }
+
+      return reference;
+  }
+
   function processUnhandledException(stackTrace, options) {
     var stack = [],
         qs = {};
+
+    if (_ignore3rdPartyErrors) {
+      if (!stackTrace.stack || !stackTrace.stack.length) {
+        _private.log('Raygun4JS: Cancelling send due to null stacktrace');
+        return;
+      }
+
+      var domain = _private.parseUrl('domain');
+
+      var scriptError = 'Script error';
+      var msg = stackTrace.message || options.status || scriptError;
+      if (msg.substring(0, scriptError.length) === scriptError &&
+        stackTrace.stack[0].url !== null &&
+        stackTrace.stack[0].url.indexOf(domain) === -1 &&
+        (stackTrace.stack[0].line === 0 || stackTrace.stack[0].func === '?')) {
+        _private.log('Raygun4JS: cancelling send due to third-party script error with no stacktrace and message');
+        return;
+      }
+
+
+      if (stackTrace.stack[0].url !== null && stackTrace.stack[0].url.indexOf(domain) === -1) {
+        var allowedDomainFound = false;
+
+        for (var i in _whitelistedScriptDomains) {
+          if (stackTrace.stack[0].url.indexOf(_whitelistedScriptDomains[i]) > -1) {
+            allowedDomainFound = true;
+          }
+        }
+
+        if (!allowedDomainFound) {
+          _private.log('Raygun4JS: cancelling send due to error on non-origin, non-whitelisted domain');
+
+          return;
+        }
+      }
+    }
+
+    if (_excludedHostnames instanceof Array) {
+      for (var hostIndex in _excludedHostnames) {
+        if (_excludedHostnames.hasOwnProperty(hostIndex)) {
+          if (window.location.hostname && window.location.hostname.match(_excludedHostnames[hostIndex])) {
+            _private.log('Raygun4JS: cancelling send as error originates from an excluded hostname');
+
+            return;
+          }
+        }
+      }
+    }
+
+    if (_excludedUserAgents instanceof Array) {
+      for(var userAgentIndex in _excludedUserAgents) {
+        if (_excludedUserAgents.hasOwnProperty(userAgentIndex)) {
+          if(navigator.userAgent.match(_excludedUserAgents[userAgentIndex])) {
+            _private.log('Raygun4JS: cancelling send as error originates from an excluded user agent');
+
+            return;
+          }
+        }
+      }
+    }
 
     if (stackTrace.stack && stackTrace.stack.length) {
       forEach(stackTrace.stack, function (i, frame) {
@@ -297,29 +548,16 @@
       });
     }
 
-    if (window.location.search && window.location.search.length > 1) {
-      forEach(window.location.search.substring(1).split('&'), function (i, segment) {
+    var queryString = _private.parseUrl('?');
+
+    if (queryString.length > 0) {
+      forEach(queryString.split('&'), function (i, segment) {
         var parts = segment.split('=');
         if (parts && parts.length === 2) {
           var key = decodeURIComponent(parts[0]);
-          var value = parts[1];
+          var value = filterValue(key, parts[1]);
 
-          if (_filteredKeys) {
-            if (Array.prototype.indexOf && _filteredKeys.indexOf === Array.prototype.indexOf) {
-              if (_filteredKeys.indexOf(key) === -1) {
-                 qs[key] = value;
-              }
-            } else {
-              for (i = 0; i < _filteredKeys.length; i++) {
-                if (_filteredKeys[i] === key) {
-                   qs[key] = value;
-                }
-              }
-            }
-          } else {
-            qs[key] = value;
-          }
-
+          qs[key] = value;
         }
       });
     }
@@ -337,27 +575,40 @@
     }
 
     if (isEmpty(options.tags)) {
-      options.tags = _tags;
+      if (typeof _tags === 'function') {
+        options.tags = _tags();
+      } else {
+        options.tags = _tags;
+      }
     }
 
     var screen = window.screen || { width: getViewPort().width, height: getViewPort().height, colorDepth: 8 };
     var custom_message = options.customData && options.customData.ajaxErrorMessage;
-    var finalCustomData = options.customData;
+
+    var finalCustomData;
+    if (_filterScope === 'customData') {
+      finalCustomData = filterObject(options.customData, 'UserCustomData');
+    } else {
+      finalCustomData = options.customData;
+    }
 
     try {
       JSON.stringify(finalCustomData);
     } catch (e) {
       var msg = 'Cannot add custom data; may contain circular reference';
       finalCustomData = { error: msg };
-      log('Raygun4JS: ' + msg);
+      _private.log('Raygun4JS: ' + msg);
     }
+
+    var finalMessage = custom_message || stackTrace.message || options.status || 'Script error';
+    finalMessage = finalMessage.substring(0, 512);
 
     var payload = {
       'OccurredOn': new Date(),
       'Details': {
         'Error': {
           'ClassName': stackTrace.name,
-          'Message': custom_message || stackTrace.message || options.status || 'Script error',
+          'Message': finalMessage,
           'StackTrace': stack
         },
         'Environment': {
@@ -376,12 +627,12 @@
         },
         'Client': {
           'Name': 'raygun-js',
-          'Version': '1.10.0'
+          'Version': '1.18.4'
         },
         'UserCustomData': finalCustomData,
         'Tags': options.tags,
         'Request': {
-          'Url': document.location.href,
+          'Url': [location.protocol, '//', location.host, location.pathname, location.hash].join(''),
           'QueryString': qs,
           'Headers': {
             'User-Agent': navigator.userAgent,
@@ -393,11 +644,22 @@
       }
     };
 
-    if (_user) {
-      payload.Details.User = _user;
+    ensureUser();
+    payload.Details.User = _user;
+
+    if (_filterScope === 'all') {
+      payload = filterObject(payload);
     }
 
-    sendToRaygun(payload);
+    if (typeof _beforeSendCallback === 'function') {
+      var mutatedPayload = _beforeSendCallback(payload);
+
+      if (mutatedPayload) {
+        sendToRaygun(mutatedPayload);
+      }
+    } else {
+      sendToRaygun(payload);
+    }
   }
 
   function sendToRaygun(data) {
@@ -405,7 +667,7 @@
       return;
     }
 
-    log('Sending exception data to Raygun:', data);
+    _private.log('Sending exception data to Raygun:', data);
     var url = _raygunApiUrl + '/entries?apikey=' + encodeURIComponent(_raygunApiKey);
     makePostCorsRequest(url, JSON.stringify(data));
   }
@@ -450,41 +712,49 @@
 
         if (xhr.status === 202) {
           sendSavedErrors();
-        } else if (_enableOfflineSave && xhr.status !== 403 && xhr.status !== 400) {
+        } else if (_enableOfflineSave && xhr.status !== 403 &&
+                   xhr.status !== 400 && xhr.status !== 429) {
           offlineSave(data);
         }
       };
 
       xhr.onload = function () {
-        log('logged error to Raygun');
+        _private.log('logged error to Raygun');
       };
 
     } else if (window.XDomainRequest) {
       xhr.ontimeout = function () {
         if (_enableOfflineSave) {
-          log('Raygun: saved error locally');
+          _private.log('Raygun: saved error locally');
           offlineSave(data);
         }
       };
 
       xhr.onload = function () {
-        log('logged error to Raygun');
+        _private.log('logged error to Raygun');
         sendSavedErrors();
       };
     }
 
     xhr.onerror = function () {
-      log('failed to log error to Raygun');
+      _private.log('failed to log error to Raygun');
     };
 
     if (!xhr) {
-      log('CORS not supported');
+      _private.log('CORS not supported');
       return;
     }
 
     xhr.send(data);
   }
 
-  window.Raygun = Raygun;
-})(window, window.jQuery);
+  if (!window.Raygun) {
+    window.Raygun = Raygun;
+  }
+
+  return Raygun;
+
+};
+
+raygunFactory(window, window.jQuery);
 
